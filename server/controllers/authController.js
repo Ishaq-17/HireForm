@@ -43,22 +43,25 @@ export const googleLogin = async (req, res) => {
     }
   }
 
+  // Verify Google ID token – provide detailed logging for troubleshooting
   try {
+    if (!process.env.GOOGLE_CLIENT_ID) {
+      console.warn('GOOGLE_CLIENT_ID is not set in environment variables');
+    }
     const ticket = await client.verifyIdToken({
       idToken: token,
       audience: process.env.GOOGLE_CLIENT_ID,
     });
     const payload = ticket.getPayload();
+    if (!payload) {
+      throw new Error('Google token payload is empty');
+    }
     const { sub: googleId, name, email, picture: profilePicture } = payload;
 
+    // Find or create the user in MongoDB (or mock DB when enabled)
     let user = await User.findOne({ email });
     if (!user) {
-      user = new User({
-        googleId,
-        name,
-        email,
-        profilePicture,
-      });
+      user = new User({ googleId, name, email, profilePicture });
       await user.save();
     } else if (!user.googleId) {
       user.googleId = googleId;
@@ -66,15 +69,16 @@ export const googleLogin = async (req, res) => {
     }
 
     const jwtToken = jwt.sign(
-      { id: user._id, email: user.email },
+      { id: user._id, email: user.email, name: user.name, profilePicture: user.profilePicture },
       process.env.JWT_SECRET || 'super_secret_jwt_key_hireform_12345',
       { expiresIn: '7d' }
     );
 
     return res.json({ token: jwtToken, user });
   } catch (error) {
-    console.error('Google Sign-in Error', error);
-    return res.status(401).json({ message: 'Invalid Google OAuth Token' });
+    // Emit full error for backend logs and a concise message for the client
+    console.error('Google Sign-in verification failed:', error);
+    return res.status(401).json({ message: error.message || 'Invalid Google OAuth Token' });
   }
 };
 
